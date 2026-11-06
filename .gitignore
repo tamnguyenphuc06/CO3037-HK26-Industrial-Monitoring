@@ -1,0 +1,28 @@
+# PlatformIO & Arduino
+.pio/
+.vscode/
+*.bin
+*.elf
+*.map
+sdkconfig.old
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.ipynb_checkpoints/
+
+# Secrets & Credentials
+.env
+*.env
+secrets.h
+config_secret.py
+*.pem
+*.key
+
+# OS & Logs
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
