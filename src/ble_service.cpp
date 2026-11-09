@@ -64,6 +64,9 @@ void ble_service_init() {
     Serial.printf("[BLE] Khoi tao Bluetooth ten: %s\n", DEVICE_NAME);
     BLEDevice::init(DEVICE_NAME);
 
+    // THÊM DÒNG NÀY: Cho phép truyền các bản tin dài lên đến 512 bytes
+    BLEDevice::setMTU(512);
+
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
 
