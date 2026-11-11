@@ -1,23 +1,32 @@
-"""TV1 BLE client for TV3's fan and pump firmware.
-
-Commands: --scan, --control, or listen-only.
-NOTE: BLE writes are not application-level ACKs.
-"""
 import asyncio
 import json
 import sys
-from pathlib import Path
 
 from bleak import BleakClient, BleakScanner
 from gateway import check_stale_nodes, node_states, process_message
 
-CONFIG_PATH = Path(__file__).with_name("ble_config.json")
+BLE_CONFIG = {
+    "fan": {
+        "name": "YOLO_FAN_NODE",
+        "id": "fan",
+        "service_uuid": "4fafc201-1fb5-459e-8fcc-c5c9c331914b",
+        "telemetry_uuid": "beb5483e-36e1-4688-b7f5-ea07361b26a8",
+        "command_uuid": "1c95d5e3-d8f7-413a-bf3d-7a2e5d7be87e",
+    },
+    "pump": {
+        "name": "YOLO_PUMP_NODE",
+        "id": "pump",
+        "service_uuid": "5bcfa202-2fc6-469f-9fdd-d6d0d442925c",
+        "telemetry_uuid": "ceb6594f-47f2-4799-c8f6-fb18472c37b9",
+        "command_uuid": "2d06e6f4-e908-424b-cf4e-8b3f6e8cf98f",
+    },
+}
 CONNECTED = {}
 
 
 def load_config():
-    with CONFIG_PATH.open("r", encoding="utf-8") as file:
-        return json.load(file)
+    """Return BLE configuration embedded in this file."""
+    return BLE_CONFIG
 
 
 async def scan_ble_nodes(config):
