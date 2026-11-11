@@ -1,4 +1,3 @@
-#include "fan_sensors.h"
 #include "config_fan.h" // Nhận chân SDA_PIN, SCL_PIN, ONE_WIRE_PIN từ TV3
 #include <Wire.h>
 #include <math.h>
@@ -8,6 +7,7 @@
 #include <Adafruit_Sensor.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <fan_sensors.h>
 
 static bool _mock_mode = false;
 static Adafruit_MPU6050 mpu;
