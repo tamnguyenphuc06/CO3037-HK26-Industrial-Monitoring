@@ -16,7 +16,7 @@
 // 0: FAN hoat dong binh thuong (TinyML/BLE/relay).
 // PUMP luon chay che do binh thuong, khong phu thuoc co nay.
 #ifndef FAN_SAMPLE_MODE
-#define FAN_SAMPLE_MODE 0
+#define FAN_SAMPLE_MODE 1
 #endif
 
 static constexpr unsigned long SAMPLE_INTERVAL_MS = 20; // ~50 Hz
@@ -29,6 +29,27 @@ void setup() {
 
     // Dat relay ve trang thai TAT ngay khi khoi dong (ca che do thu mau).
     relay_init(PIN_RELAY, RELAY_ACTIVE_LEVEL);
+   
+#if defined(USE_FAN_CONFIG)
+    // D4: giu LOW, khong cho quay nguoc
+    pinMode(PIN_FAN_D4, OUTPUT);
+    digitalWrite(PIN_FAN_D4, LOW);
+
+    // D3: chan dieu khien toc do quat bang PWM
+    pinMode(PIN_FAN_D3, OUTPUT);
+    digitalWrite(PIN_FAN_D3, LOW);
+
+    // PWM: tan so 1000 Hz, do phan giai 8 bit
+    bool pwmReady = ledcAttach(PIN_FAN_D3, 1000, 8);
+
+    if (pwmReady) {
+        // Duty 180/255 ~ 70.6%
+        ledcWrite(PIN_FAN_D3, 0);
+    } else {
+        // Neu khoi tao PWM that bai, giu quat tat
+        digitalWrite(PIN_FAN_D3, LOW);
+    }
+#endif
 
 #if defined(USE_FAN_CONFIG) && FAN_SAMPLE_MODE
     // Chi khoi tao cam bien, khong khoi dong BLE/TinyML khi thu mau.
