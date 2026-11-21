@@ -6,10 +6,11 @@
 #define DEVICE_ID           "pump"
 
 // Chân GPIO trên bo Yolo UNO
-#define PIN_RELAY           4       // GPIO điều khiển Relay bơm
-#define PIN_DS18B20         5       // Chân One-Wire cảm biến nhiệt độ
-#define PIN_I2C_SDA         6       // Chân SDA cho MPU6050
-#define PIN_I2C_SCL         7       // Chân SCL cho MPU6050
+// Chân trên Yolo UNO của node bơm
+#define PIN_RELAY           4       // GPIO4: điều khiển relay rời
+#define PIN_DS18B20         5       // GPIO5 (D2): dữ liệu DS18B20
+#define PIN_I2C_SDA         11      // GPIO11: SDA của cổng I2C
+#define PIN_I2C_SCL         12      // GPIO12: SCL của cổng I2C
 
 // Quy ước mức kích Relay
 #define RELAY_ACTIVE_LEVEL  LOW

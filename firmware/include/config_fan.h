@@ -5,11 +5,13 @@
 #define DEVICE_NAME         "YOLO_FAN_NODE"
 #define DEVICE_ID           "fan"
 
-// Chân GPIO trên bo Yolo UNO
-#define PIN_RELAY           4       // GPIO điều khiển Relay quạt
-#define PIN_DS18B20         5       // Chân One-Wire cảm biến nhiệt độ
-#define PIN_I2C_SDA         6       // Chân SDA cho MPU6050
-#define PIN_I2C_SCL         7       // Chân SCL cho MPU6050
+// Chân trên Yolo UNO
+#define PIN_RELAY           4       // Relay rời, nếu có lắp
+#define PIN_DS18B20         5       // D2: dữ liệu DS18B20
+#define PIN_I2C_SDA         11      // SDA: cổng I2C cho MPU6050
+#define PIN_I2C_SCL         12      // SCL: cổng I2C cho MPU6050
+#define PIN_FAN_D3          6       // D3: chân quạt đã thử chạy
+#define PIN_FAN_D4          7       // D4: chân quạt đã thử chạy
 
 // Quy ước mức kích Relay (0: Kích LOW, 1: Kích HIGH)
 #define RELAY_ACTIVE_LEVEL  LOW     // Đa số module Relay trên thị trường kích mức LOW
@@ -18,7 +20,7 @@
 #define TELEMETRY_INTERVAL_MS 1000
 
 // Cờ kích hoạt chế độ dữ liệu giả (chưa có phần cứng thật)
-#define SIMULATE_DATA       1
+#define SIMULATE_DATA       0
 
 // UUID BLE riêng cho Node Quạt (để TV1 không bị quét nhầm)
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"

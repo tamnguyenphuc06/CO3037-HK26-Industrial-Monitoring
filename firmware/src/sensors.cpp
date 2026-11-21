@@ -1,24 +1,62 @@
 #include "sensors.h"
 
 #include <Wire.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
+#include <MPU6500_WE.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <math.h>
 
-// Module dung chung cho FAN/PUMP. Chan GPIO den tu config cua tung node.
+// Chan se duoc cap nhat tu config_fan.h / config_pump.h.
 static uint8_t _pin_ds18b20 = 5;
-static uint8_t _pin_sda = 6;
-static uint8_t _pin_scl = 7;
+static uint8_t _pin_sda = 11;
+static uint8_t _pin_scl = 12;
 static bool _is_simulation = true;
 
-static Adafruit_MPU6050 mpu;
+// Dia chi I2C da kiem tra tren module cua ban.
+static constexpr uint8_t MPU_ADDRESS = 0x68;
+
+// Quy doi don vi ve dung quy uoc cua du an.
+static constexpr float GRAVITY_MS2 = 9.80665f;
+static constexpr float DEG_TO_RAD_FACTOR = PI / 180.0f;
+
+static MPU6500_WE mpu(MPU_ADDRESS);
 static OneWire oneWire;
 static DallasTemperature ds18b20(&oneWire);
 
 static bool mpu_ready = false;
 static bool ds_ready = false;
+
+// Kiem tra module con tra loi tren I2C.
+static bool mpuResponds() {
+    Wire.beginTransmission(MPU_ADDRESS);
+    return Wire.endTransmission() == 0;
+}
+
+// Doc gia toc, doi tu g sang m/s^2.
+static bool readAcceleration(float &ax, float &ay, float &az) {
+    if (!mpu_ready || !mpuResponds()) {
+        return false;
+    }
+
+    xyzFloat acceleration = mpu.getGValues();
+
+    ax = acceleration.x * GRAVITY_MS2;
+    ay = acceleration.y * GRAVITY_MS2;
+    az = acceleration.z * GRAVITY_MS2;
+
+    return isfinite(ax) && isfinite(ay) && isfinite(az);
+}
+
+// In loi dinh ky de khong bo lo khi mo Serial Monitor muon.
+static void printMpuError() {
+    static unsigned long lastErrorTime = 0;
+    const unsigned long now = millis();
+
+    if (now - lastErrorTime >= 2000) {
+        lastErrorTime = now;
+        Serial.println("[LOI] MPU6500 chua san sang hoac doc that bai.");
+    }
+}
 
 void sensors_init(uint8_t pin_ds18b20,
                   uint8_t pin_sda,
@@ -33,28 +71,46 @@ void sensors_init(uint8_t pin_ds18b20,
     ds_ready = false;
 
     if (_is_simulation) {
-        Serial.println("[SENSORS] Che do MO PHONG (SIMULATION MODE)");
+        Serial.println("[SENSORS] Che do MO PHONG");
         return;
     }
 
-    Serial.println("[SENSORS] Che do DOC CAM BIEN THAT (REAL SENSORS)");
+    Serial.println("[SENSORS] Che do DOC CAM BIEN THAT");
 
-    // MPU6050: I2C, gia toc +/-4g, con quay +/-500 deg/s.
+    // Khoi tao I2C theo chan cau hinh cua node.
     Wire.begin(_pin_sda, _pin_scl);
-    if (mpu.begin()) {
-        mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
-        mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-        mpu.setFilterBandwidth(MPU6050_BAND_44_HZ);
+    Wire.setClock(100000);
+    delay(100);
+
+    // Khoi tao MPU6500.
+    if (mpu.init()) {
+        // Gia toc +/-4g, van toc goc +/-500 do/giay.
+        mpu.setAccRange(MPU6500_ACC_RANGE_4G);
+        mpu.setGyrRange(MPU6500_GYRO_RANGE_500);
+
+        // Bat bo loc thong thap cho gia toc va con quay.
+        mpu.enableAccDLPF(true);
+        mpu.setAccDLPF(MPU6500_DLPF_4);
+
+        mpu.enableGyrDLPF();
+        mpu.setGyrDLPF(MPU6500_DLPF_4);
+
+        // Tan so noi bo: 1000 / (1 + 19) = 50 Hz.
+        mpu.setSampleRateDivider(19);
+
+        delay(100);
         mpu_ready = true;
-        Serial.println("[MPU6050] Khoi tao thanh cong");
+
+        Serial.println("[MPU6500] Khoi tao thanh cong tai 0x68");
     } else {
-        Serial.println("[MPU6050] Khong tim thay cam bien!");
+        Serial.println("[MPU6500] Khoi tao that bai!");
     }
 
-    // DS18B20: yeu cau chuyen doi nhiet do khong chan loop().
+    // Khoi tao DS18B20 tren duong OneWire rieng.
     oneWire.begin(_pin_ds18b20);
     ds18b20.begin();
     ds18b20.setWaitForConversion(false);
+
     if (ds18b20.getDeviceCount() > 0) {
         ds_ready = true;
         ds18b20.requestTemperatures();
@@ -65,92 +121,111 @@ void sensors_init(uint8_t pin_ds18b20,
 }
 
 SensorData sensors_read_data() {
-    // Khoi tao tat ca truong = 0/false, tranh gia tri rac neu doc loi.
     SensorData data{};
     data.is_mock = _is_simulation;
 
     if (_is_simulation) {
-        // Du lieu gia cua TV3, mo rong boi gyro va status cua TV2.
-        data.temp = 29.0f + (random(0, 50) / 10.0f);
+        data.temp = 29.0f + random(0, 50) / 10.0f;
+
         data.ax = random(-20, 20) / 100.0f;
         data.ay = random(-20, 20) / 100.0f;
-        data.az = 9.80f + (random(-15, 15) / 100.0f);
+        data.az = 9.80f + random(-15, 15) / 100.0f;
+
         data.gx = 0.01f;
         data.gy = 0.01f;
         data.gz = 0.02f;
-        data.vibration_rms = sqrtf(data.ax * data.ax + data.ay * data.ay);
+
+        data.vibration_rms =
+            sqrtf(data.ax * data.ax + data.ay * data.ay);
+
         data.status = SENSOR_OK;
         data.is_valid = true;
         return data;
     }
 
-    bool mpu_ok = false;
+    bool mpu_ok = readAcceleration(data.ax, data.ay, data.az);
     bool temperature_ok = false;
 
-    if (mpu_ready) {
-        sensors_event_t a, g, sensor_temp;
-        if (mpu.getEvent(&a, &g, &sensor_temp)) {
-            data.ax = a.acceleration.x;
-            data.ay = a.acceleration.y;
-            data.az = a.acceleration.z;
-            data.gx = g.gyro.x;
-            data.gy = g.gyro.y;
-            data.gz = g.gyro.z;
-            // Giu cach tinh tu code cu de khong mat truong du lieu.
-            // Day la do lon gia toc XY tai mot thoi diem, KHONG phai RMS cua so.
-            data.vibration_rms = sqrtf(data.ax * data.ax + data.ay * data.ay);
-            mpu_ok = true;
-        }
+    if (mpu_ok) {
+        xyzFloat gyro = mpu.getGyrValues();
+
+        // Thu vien tra do/giay; du an dung rad/giay.
+        data.gx = gyro.x * DEG_TO_RAD_FACTOR;
+        data.gy = gyro.y * DEG_TO_RAD_FACTOR;
+        data.gz = gyro.z * DEG_TO_RAD_FACTOR;
+
+        mpu_ok = isfinite(data.gx)
+              && isfinite(data.gy)
+              && isfinite(data.gz);
+
+        // Giu truong cu: do lon gia toc XY tuc thoi.
+        // Day chua phai RMS tren mot cua so mau.
+        data.vibration_rms =
+            sqrtf(data.ax * data.ax + data.ay * data.ay);
     }
 
     if (ds_ready) {
-        // Doc ket qua chu ky truoc, sau do yeu cau chu ky tiep theo.
-        const float measured_temp = ds18b20.getTempCByIndex(0);
-        if (measured_temp != DEVICE_DISCONNECTED_C) {
-            data.temp = measured_temp;
+        const float temperature = ds18b20.getTempCByIndex(0);
+
+        if (temperature != DEVICE_DISCONNECTED_C
+            && isfinite(temperature)) {
+            data.temp = temperature;
             temperature_ok = true;
         }
+
         ds18b20.requestTemperatures();
     }
 
-    // Status co the bieu dien loi cua tung cam bien hoac ca hai.
     uint8_t error_flags = SENSOR_OK;
-    if (!mpu_ok) error_flags |= SENSOR_ERR_MPU;
-    if (!temperature_ok) error_flags |= SENSOR_ERR_DS18B20;
+
+    if (!mpu_ok) {
+        error_flags |= SENSOR_ERR_MPU;
+    }
+
+    if (!temperature_ok) {
+        error_flags |= SENSOR_ERR_DS18B20;
+    }
+
     data.status = static_cast<SensorStatus>(error_flags);
     data.is_valid = (data.status == SENSOR_OK);
+
     return data;
 }
 
-// Chi in du lieu gia toc tho cho chuong trinh collect_samples.py.
-// Ham duoc khai bao nhung CHUA tu chay: can goi dinh ky tu main.cpp.
 void streamVibrationSampleSerial() {
 #if defined(USE_PUMP_CONFIG)
-    return; // Pump hien khong thu du lieu de train TinyML.
+    return;
 #else
     const unsigned long timestamp_ms = millis();
 
     if (_is_simulation) {
-        // De thu nghiem pipeline, KHONG dung cho huan luyen mo hinh thuc.
         const float t = timestamp_ms / 1000.0f;
-        const float ax = 0.05f * sinf(2.0f * PI * 10.0f * t)
-                       + random(-5, 5) / 100.0f;
-        const float ay = 0.04f * cosf(2.0f * PI * 10.0f * t)
-                       + random(-5, 5) / 100.0f;
-        const float az = 9.81f + random(-8, 8) / 100.0f;
-        Serial.printf("%lu,%.4f,%.4f,%.4f\n", timestamp_ms, ax, ay, az);
+
+        const float ax =
+            0.05f * sinf(2.0f * PI * 10.0f * t)
+            + random(-5, 5) / 100.0f;
+
+        const float ay =
+            0.04f * cosf(2.0f * PI * 10.0f * t)
+            + random(-5, 5) / 100.0f;
+
+        const float az =
+            9.81f + random(-8, 8) / 100.0f;
+
+        Serial.printf("%lu,%.4f,%.4f,%.4f\n",
+                      timestamp_ms, ax, ay, az);
         return;
     }
 
-    if (!mpu_ready) return;
+    float ax, ay, az;
 
-    sensors_event_t a, g, sensor_temp;
-    if (!mpu.getEvent(&a, &g, &sensor_temp)) return;
+    if (!readAcceleration(ax, ay, az)) {
+        printMpuError();
+        return;
+    }
 
+    // Chi xuat gia toc MPU6500, khong phu thuoc DS18B20.
     Serial.printf("%lu,%.4f,%.4f,%.4f\n",
-                  timestamp_ms,
-                  a.acceleration.x,
-                  a.acceleration.y,
-                  a.acceleration.z);
+                  timestamp_ms, ax, ay, az);
 #endif
 }
