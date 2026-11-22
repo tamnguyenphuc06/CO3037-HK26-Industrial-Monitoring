@@ -4,7 +4,9 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <ArduinoJson.h>
-
+#if defined(USE_FAN_CONFIG)
+void fan_set_pwm(uint8_t duty);
+#endif
 #if defined(USE_FAN_CONFIG)
     #include "config_fan.h"
 #elif defined(USE_PUMP_CONFIG)
@@ -44,9 +46,24 @@ class CommandCallbacks: public BLECharacteristicCallbacks {
                     relay_set(true);
                     Serial.println("-> [KET QUA]: DA BAT RELAY!");
                 } else if (strcmp(cmd, "RELAY_OFF") == 0) {
-                    relay_set(false);
-                    Serial.println("-> [KET QUA]: DA TAT RELAY!");
-                }
+    relay_set(false);
+    Serial.println("-> [KET QUA]: DA TAT RELAY!");
+  }
+     #if defined(USE_FAN_CONFIG)
+      else if (strcmp(cmd, "SET_FAN_PWM") == 0) {
+    if (!doc["value"].is<int>()) {
+        Serial.println("[FAN] Invalid PWM type");
+    } else {
+        int pwm = doc["value"].as<int>();
+
+        if (pwm >= 0 && pwm <= 255) {
+            fan_set_pwm(static_cast<uint8_t>(pwm));
+        } else {
+            Serial.println("[FAN] PWM out of range");
+        }
+    }
+}
+        #endif
             } else {
                 if (rxValue == "ON" || rxValue == "1") {
                     relay_set(true);
@@ -97,7 +114,10 @@ void ble_service_init() {
     Serial.println("[BLE] Dang phat quang ba, san sang ket noi...");
 }
 
-void ble_service_send_telemetry(float temp, float ax, float ay, float az, int ai_state) {
+void ble_service_send_telemetry(
+    float temp, float ax, float ay, float az,
+    int ai_state, int pwm
+) {
     if (pServer == nullptr || pTelemetryChar == nullptr) return;
 
     // Kiểm tra trực tiếp số lượng client kết nối từ server
@@ -123,7 +143,9 @@ void ble_service_send_telemetry(float temp, float ax, float ay, float az, int ai
     doc["az"] = serialized(String(az, 2));
     doc["relay"] = relay_get_state() ? 1 : 0;
     doc["ai"] = ai_state;
-
+    if (pwm >= 0 && pwm <= 255) {
+    doc["pwm"] = pwm;
+}
     char payload[128];
     serializeJson(doc, payload);
 

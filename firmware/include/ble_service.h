@@ -7,8 +7,10 @@
 void ble_service_init();
 
 // Gửi bản tin Telemetry JSON lên BLE Client (PC hoặc App)
-void ble_service_send_telemetry(float temp, float ax, float ay, float az, int ai_state);
-
+void ble_service_send_telemetry(
+    float temp, float ax, float ay, float az,
+    int ai_state, int pwm = -1
+);
 // Kiểm tra xem đã có thiết bị nào kết nối vào chưa
 bool ble_is_connected();
 

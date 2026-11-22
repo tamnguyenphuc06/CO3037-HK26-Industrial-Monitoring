@@ -94,30 +94,61 @@ class CoreIoTBridge:
             request_id = data.get("id")
             if type(request_id) is not int:
                 raise ValueError("RPC request id must be an integer")
-            if data["method"] != "setRelay":
-                self.publish_rpc_response(node_id, request_id, {
-                    "success": False, "error": "Unsupported method (use setRelay)"
-                })
-                return
+ 
+            method = data["method"]
             params = data.get("params")
-            if isinstance(params, dict):
-                params = params.get("on")
-            if type(params) is not bool:
+
+            if method == "setRelay":
+                if isinstance(params, dict):
+                    params = params.get("on")
+
+                if type(params) is not bool:
+                    self.publish_rpc_response(node_id, request_id, {
+                        "success": False,
+                        "error": "setRelay requires true/false"
+                    })
+                    return
+
+            elif method == "setFanPWM":
+                if node_id != "fan":
+                    self.publish_rpc_response(node_id, request_id, {
+                        "success": False,
+                        "error": "PWM only supported for FAN"
+                    })
+                    return
+
+                if isinstance(params, dict):
+                    params = params.get("pwm")
+
+                if type(params) is not int or not 0 <= params <= 255:
+                    self.publish_rpc_response(node_id, request_id, {
+                        "success": False,
+                        "error": "PWM must be an integer from 0 to 255"
+                    })
+                    return
+
+            else:
                 self.publish_rpc_response(node_id, request_id, {
-                    "success": False, "error": "setRelay params must be true/false or {on: true/false}"
+                    "success": False,
+                    "error": "Unsupported RPC method"
                 })
                 return
+
             if self.loop is None or self.rpc_handler is None:
                 self.publish_rpc_response(node_id, request_id, {
-                    "success": False, "error": "BLE control unavailable in MQTT-only test"
+                    "success": False,
+                    "error": "BLE control unavailable"
                 })
                 return
 
             future = asyncio.run_coroutine_threadsafe(
-                self._handle_rpc(node_id, request_id, params), self.loop
+                self._handle_rpc(node_id, request_id, params, method=method),
+                self.loop
             )
-            future.add_done_callback(self._report_rpc_task_error)
+           
         except (ValueError, TypeError, UnicodeDecodeError) as exc:
+            print(f"[MQTT RPC INVALID] {exc}")
+
             print(f"[MQTT RPC INVALID] {exc}")
 
     @staticmethod
@@ -127,13 +158,15 @@ class CoreIoTBridge:
         except Exception as exc:
             print(f"[MQTT RPC TASK ERROR] {exc}")
 
-    async def _handle_rpc(self, node_id, request_id, turn_on):
+ 
+    async def _handle_rpc(self, node_id, request_id, value, method="setRelay"):
         try:
-            result = await self.rpc_handler(node_id, turn_on)
+            result = await self.rpc_handler(node_id, value, method=method)
             if not isinstance(result, dict):
                 result = {"success": bool(result)}
         except Exception as exc:
             result = {"success": False, "error": str(exc)}
+
         self.publish_rpc_response(node_id, request_id, result)
 
     def publish_rpc_response(self, node_id, request_id, response):
@@ -159,6 +192,8 @@ class CoreIoTBridge:
         values = {field: data[field] for field in (
             "id", "temp", "ax", "ay", "az", "relay", "ai"
         )}
+        if node_id == "fan" and "pwm" in data:
+         values["pwm"] = data["pwm"]
         payload = {self.device_names[node_id]: [{
             "ts": int(time.time() * 1000),
             "values": values,

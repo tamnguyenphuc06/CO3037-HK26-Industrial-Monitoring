@@ -70,6 +70,14 @@ def make_notify_callback(expected_id, bridge=None):
 def build_command(turn_on):
     return json.dumps({"cmd": "RELAY_ON" if turn_on else "RELAY_OFF"}).encode("utf-8")
 
+def build_pwm_command(duty):
+    if type(duty) is not int or not 0 <= duty <= 255:
+        raise ValueError("PWM must be an integer from 0 to 255")
+
+    return json.dumps({
+        "cmd": "SET_FAN_PWM",
+        "value": duty
+    }).encode("utf-8")
 
 async def send_command(client, node_info, turn_on):
     node_id = node_info["id"]
@@ -104,7 +112,22 @@ async def send_command(client, node_info, turn_on):
         await asyncio.sleep(0.1)
     print(f"[UNCONFIRMED] {node_id.upper()}: no matching fresh telemetry within {ACK_TIMEOUT:g}s")
     return False
+async def send_pwm_command(client, node_info, duty):
+    if node_info["id"] != "fan":
+        raise ValueError("PWM control is only supported for FAN")
 
+    payload = build_pwm_command(duty)
+
+    await asyncio.wait_for(
+        client.write_gatt_char(
+            node_info["command_uuid"],
+            payload,
+            response=True
+        ),
+        timeout=ACK_TIMEOUT
+    )
+
+    print(f"[PWM WRITE OK] FAN | PWM: {duty}/255")
 
 async def receive_node(node_id, device, info, bridge=None):
     try:
@@ -201,7 +224,33 @@ async def command_console(config):
                     print(f"{node_id.upper()}: {'BLE CONNECTED' if online else 'BLE OFFLINE'}; "
                           f"telemetry={telemetry_status(node_id)}; latest={node_states.get(node_id)}")
                 continue
+
             parts = command.split()
+
+            if len(parts) == 3 and parts[0] == "fan" and parts[1] == "pwm":
+                try:
+                    duty = int(parts[2])
+
+                    if not 0 <= duty <= 255:
+                        print("[INVALID] PWM must be 0-255")
+                        continue
+
+                    client = CONNECTED.get("fan")
+
+                    if client is None or not client.is_connected:
+                        print("[OFFLINE] FAN: cannot send PWM")
+                        continue
+
+                    async with COMMAND_LOCKS["fan"]:
+                        await send_pwm_command(client, config["fan"], duty)
+
+                except ValueError:
+                    print("[INVALID] PWM must be an integer")
+                except Exception as exc:
+                    print(f"[PWM ERROR] FAN: {exc}")
+
+                continue
+
             if len(parts) != 2 or parts[0] not in config or parts[1] not in ("on", "off"):
                 print("[INVALID] Use: fan on | fan off | pump on | pump off | status | quit")
                 continue
@@ -229,24 +278,48 @@ async def main():
     if "--mqtt" in sys.argv:
         from mqtt_bridge import CoreIoTBridge
 
-        async def cloud_rpc(node_id, turn_on):
+
+        async def cloud_rpc(node_id, value, method="setRelay"):
             info = config[node_id]
             client = CONNECTED.get(node_id)
+
             if client is None or not client.is_connected:
                 return {"success": False, "error": f"{node_id.upper()} BLE offline"}
-            async with COMMAND_LOCKS[node_id]:
-                confirmed = await send_command(client, info, turn_on)
-            if not confirmed:
-                return {"success": False, "error": "Relay state not confirmed by fresh telemetry"}
-            return {"success": True, "relay": int(turn_on)}
 
-        bridge = CoreIoTBridge(loop=asyncio.get_running_loop(), rpc_handler=cloud_rpc)
+            if method == "setFanPWM":
+                if node_id != "fan":
+                    return {"success": False, "error": "PWM only supported for FAN"}
+
+                if type(value) is not int or not 0 <= value <= 255:
+                    return {"success": False, "error": "Invalid PWM value"}
+
+                async with COMMAND_LOCKS["fan"]:
+                    await send_pwm_command(client, info, value)
+
+                return {"success": True, "pwm": value}
+
+            if method == "setRelay":
+                async with COMMAND_LOCKS[node_id]:
+                    confirmed = await send_command(client, info, value)
+
+                if not confirmed:
+                    return {"success": False, "error": "Relay state not confirmed"}
+
+                return {"success": True, "relay": int(value)}
+
+            return {"success": False, "error": "Unsupported RPC method"}
+
+        bridge = CoreIoTBridge(
+            loop=asyncio.get_running_loop(),
+            rpc_handler=cloud_rpc
+        )
         bridge.start()
 
     tasks = [
         asyncio.create_task(connection_manager(config, bridge)),
         asyncio.create_task(stale_monitor()),
     ]
+
     try:
         if "--control" in sys.argv:
             await command_console(config)
@@ -255,7 +328,9 @@ async def main():
     finally:
         for task in tasks:
             task.cancel()
+
         await asyncio.gather(*tasks, return_exceptions=True)
+
         if bridge is not None:
             bridge.stop()
 

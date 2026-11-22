@@ -1,3 +1,4 @@
+
 #include <Arduino.h>
 #include "relay.h"
 #include "ble_service.h"
@@ -9,93 +10,183 @@
 #elif defined(USE_PUMP_CONFIG)
     #include "config_pump.h"
 #else
-    #error "Phai khai bao USE_FAN_CONFIG hoac USE_PUMP_CONFIG trong platformio.ini"
+    #error "Phai khai bao USE_FAN_CONFIG hoac USE_PUMP_CONFIG"
 #endif
 
-// 1: FAN xuat CSV qua USB Serial de collect_samples.py thu mau.
-// 0: FAN hoat dong binh thuong (TinyML/BLE/relay).
-// PUMP luon chay che do binh thuong, khong phu thuoc co nay.
+// 1: FAN xuat CSV de thu du lieu huan luyen.
+// 0: FAN chay TinyML va BLE.
+// PUMP khong bi anh huong boi che do nay.
 #ifndef FAN_SAMPLE_MODE
-#define FAN_SAMPLE_MODE 1
+#define FAN_SAMPLE_MODE 0
 #endif
 
-static constexpr unsigned long SAMPLE_INTERVAL_MS = 20; // ~50 Hz
+static constexpr unsigned long SAMPLE_INTERVAL_MS = 20;
 static unsigned long lastSampleTime = 0;
 static unsigned long lastTelemetryTime = 0;
+
+#if defined(USE_FAN_CONFIG)
+
+// PWM 8-bit: 0-255.
+// 130: thu nghiem fan_low_speed.
+// 255: thu nghiem fan_normal.
+static uint8_t fanPwmDuty = 200;
+void fan_set_pwm(uint8_t duty) {
+    if (ledcWrite(PIN_FAN_D3, duty)) {
+        fanPwmDuty = duty;
+        Serial.printf("[FAN] PWM updated: %u/255\n", (unsigned)fanPwmDuty);
+    } else {
+        Serial.println("[FAN] Failed to update PWM");
+    }
+}
+// Luu du lieu FAN moi nhat de gui BLE.
+static SensorData latestFanData{};
+static bool hasFanData = false;
+
+#endif
 
 void setup() {
     Serial.begin(115200);
     delay(1500);
 
-    // Dat relay ve trang thai TAT ngay khi khoi dong (ca che do thu mau).
+    // Relay o trang thai TAT khi khoi dong.
     relay_init(PIN_RELAY, RELAY_ACTIVE_LEVEL);
-   
+
 #if defined(USE_FAN_CONFIG)
-    // D4: giu LOW, khong cho quay nguoc
+
+    // Dieu khien quat OhStem bang D3-D4.
     pinMode(PIN_FAN_D4, OUTPUT);
     digitalWrite(PIN_FAN_D4, LOW);
 
-    // D3: chan dieu khien toc do quat bang PWM
     pinMode(PIN_FAN_D3, OUTPUT);
     digitalWrite(PIN_FAN_D3, LOW);
 
-    // PWM: tan so 1000 Hz, do phan giai 8 bit
+    // PWM 1000 Hz, 8-bit.
     bool pwmReady = ledcAttach(PIN_FAN_D3, 1000, 8);
 
     if (pwmReady) {
-        // Duty 180/255 ~ 70.6%
-        ledcWrite(PIN_FAN_D3, 0);
+        ledcWrite(PIN_FAN_D3, fanPwmDuty);
+
+        Serial.printf(
+            "[FAN] PWM = %u/255\n",
+            (unsigned)fanPwmDuty
+        );
     } else {
-        // Neu khoi tao PWM that bai, giu quat tat
         digitalWrite(PIN_FAN_D3, LOW);
+        Serial.println("[FAN] Loi khoi tao PWM!");
     }
+
 #endif
 
 #if defined(USE_FAN_CONFIG) && FAN_SAMPLE_MODE
-    // Chi khoi tao cam bien, khong khoi dong BLE/TinyML khi thu mau.
-    // SIMULATE_DATA=1: mau gia de test pipeline Python.
-    // SIMULATE_DATA=0: doc MPU6050 that de tao dataset.
-    sensors_init(PIN_DS18B20, PIN_I2C_SDA, PIN_I2C_SCL, SIMULATE_DATA);
+
+    // Che do thu CSV, khong chay BLE/TinyML.
+    Serial.println("[FAN] SAMPLE MODE");
+
+    sensors_init(
+        PIN_DS18B20,
+        PIN_I2C_SDA,
+        PIN_I2C_SCL,
+        SIMULATE_DATA
+    );
+
     lastSampleTime = millis();
     return;
-#else
-    // Che do van hanh binh thuong cua TV3: FAN (khi tat sample) / PUMP.
-    Serial.println("\n==========================================");
-    Serial.printf(" HE THONG KHOI DONG: %s\n", DEVICE_NAME);
-    Serial.println("==========================================");
 
-    sensors_init(PIN_DS18B20, PIN_I2C_SDA, PIN_I2C_SCL, SIMULATE_DATA);
+#else
+
+    // Che do van hanh binh thuong.
+    Serial.println("\n================================");
+    Serial.printf("DEVICE: %s\n", DEVICE_NAME);
+    Serial.println("================================");
+
+    sensors_init(
+        PIN_DS18B20,
+        PIN_I2C_SDA,
+        PIN_I2C_SCL,
+        SIMULATE_DATA
+    );
+
+#if defined(USE_FAN_CONFIG)
     tinyml_init();
+#endif
+
     ble_service_init();
+
+    lastSampleTime = millis();
+    lastTelemetryTime = millis();
+
+    Serial.println("[SYSTEM] Khoi tao hoan tat.");
+
 #endif
 }
 
 void loop() {
+
 #if defined(USE_FAN_CONFIG) && FAN_SAMPLE_MODE
-    // 1 dong CSV / ~20 ms: timestamp_ms,ax,ay,az.
-    // collect_samples.py doc tren cung cong COM; KHONG mo Serial Monitor dong thoi.
+
+    // FAN: chi thu du lieu gia toc de train.
     const unsigned long now = millis();
+
     if (now - lastSampleTime >= SAMPLE_INTERVAL_MS) {
         lastSampleTime = now;
         streamVibrationSampleSerial();
     }
-#else
-    const unsigned long currentMillis = millis();
 
-    // Telemetry BLE theo chu ky 1 giay nhu main.cpp goc cua TV3.
-    if (currentMillis - lastTelemetryTime >= TELEMETRY_INTERVAL_MS) {
-        lastTelemetryTime = currentMillis;
+#elif defined(USE_FAN_CONFIG)
+
+    // FAN: doc MPU6500 moi ~20 ms.
+    const unsigned long now = millis();
+
+    if (now - lastSampleTime >= SAMPLE_INTERVAL_MS) {
+        lastSampleTime = now;
+
+        latestFanData = sensors_read_data();
+        hasFanData = true;
+
+        // Them mot bo ax, ay, az vao bo dem.
+        // Ham tu chay inference khi du 100 mau,
+        // sau do moi 50 mau moi.
+        tinyml_infer(latestFanData);
+    }
+
+    // FAN: gui BLE moi 1000 ms.
+    if (now - lastTelemetryTime >= TELEMETRY_INTERVAL_MS) {
+        lastTelemetryTime = now;
+
+        if (hasFanData) {
+            // Lay ket qua AI moi nhat, khong suy luan lai.
+            int ai_state = tinyml_get_state();
+
+ble_service_send_telemetry(
+    latestFanData.temp,
+    latestFanData.ax,
+    latestFanData.ay,
+    latestFanData.az,
+    ai_state,
+    fanPwmDuty
+);
+        }
+    }
+
+#elif defined(USE_PUMP_CONFIG)
+
+    // PUMP: giu chu ky doc va gui BLE 1 giay.
+    // Khong chay mo hinh TinyML cua FAN.
+    const unsigned long now = millis();
+
+    if (now - lastTelemetryTime >= TELEMETRY_INTERVAL_MS) {
+        lastTelemetryTime = now;
 
         SensorData sensor_data = sensors_read_data();
-        int ai_state = tinyml_infer(sensor_data);
 
         ble_service_send_telemetry(
             sensor_data.temp,
             sensor_data.ax,
             sensor_data.ay,
             sensor_data.az,
-            ai_state
+            -1
         );
     }
+
 #endif
 }
