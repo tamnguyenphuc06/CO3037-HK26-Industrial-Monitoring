@@ -17,7 +17,7 @@
 #define RELAY_ACTIVE_LEVEL  LOW     // Đa số module Relay trên thị trường kích mức LOW
 
 // Chu kỳ gửi dữ liệu BLE (miligiây)
-#define TELEMETRY_INTERVAL_MS 80
+#define TELEMETRY_INTERVAL_MS 1000
 
 // Cờ kích hoạt chế độ dữ liệu giả (chưa có phần cứng thật)
 #define SIMULATE_DATA       0
