@@ -112,9 +112,21 @@ async def send_command(client, node_info, turn_on):
         await asyncio.sleep(0.1)
     print(f"[UNCONFIRMED] {node_id.upper()}: no matching fresh telemetry within {ACK_TIMEOUT:g}s")
     return False
+
 async def send_pwm_command(client, node_info, duty):
     if node_info["id"] != "fan":
-        raise ValueError("PWM control is only supported for FAN")
+        raise ValueError("PWM only supported for FAN")
+
+    state = node_states.get("fan") or {}
+
+    # Khi chua xac minh mo khoa, chi cho phep PWM = 0
+    if duty > 0:
+        if (
+            telemetry_status("fan") != "FRESH"
+            or state.get("protection_locked") is not False
+        ):
+            print("[PWM REJECTED] FAN locked or unconfirmed")
+            return False
 
     payload = build_pwm_command(duty)
 
@@ -127,7 +139,76 @@ async def send_pwm_command(client, node_info, duty):
         timeout=ACK_TIMEOUT
     )
 
-    print(f"[PWM WRITE OK] FAN | PWM: {duty}/255")
+    # Chi chap nhan telemetry moi sau BLE Write
+    baseline = message_count["fan"]
+    deadline = time.monotonic() + ACK_TIMEOUT
+
+    while time.monotonic() < deadline:
+        state = node_states.get("fan") or {}
+
+        if not client.is_connected:
+            return False
+
+        if (
+            message_count["fan"] > baseline
+            and telemetry_status("fan") == "FRESH"
+            and state.get("pwm") == duty
+            and (
+                duty == 0
+                or state.get("protection_locked") is False
+            )
+        ):
+            print(f"[PWM CONFIRMED] FAN PWM={duty}")
+            return True
+
+        await asyncio.sleep(0.1)
+
+    print("[PWM FAILED] No telemetry confirmation")
+    return False
+
+async def send_fan_protection_command(client, node_info, locked):
+    if node_info["id"] != "fan":
+        return False
+
+    command = (
+        "FAN_PROTECTION_LOCK"
+        if locked else "FAN_PROTECTION_RESET"
+    )
+
+    payload = json.dumps({"cmd": command}).encode("utf-8")
+    baseline = message_count["fan"]
+
+    await asyncio.wait_for(
+        client.write_gatt_char(
+            node_info["command_uuid"],
+            payload,
+            response=True
+        ),
+        timeout=ACK_TIMEOUT
+    )
+
+    # Cho telemetry moi xac nhan ESP32 da thuc thi
+    deadline = time.monotonic() + ACK_TIMEOUT
+
+    while time.monotonic() < deadline:
+        state = node_states.get("fan")
+
+        if (
+            client.is_connected
+            and message_count["fan"] > baseline
+            and telemetry_status("fan") == "FRESH"
+            and state is not None
+            and type(state.get("protection_locked")) is bool
+            and state["protection_locked"] == locked
+            and state.get("pwm") == 0
+        ):
+            print(f"[FAN] Protection confirmed: {locked}")
+            return True
+
+        await asyncio.sleep(0.1)
+
+    print("[FAN] Protection confirmation timeout")
+    return False
 
 async def receive_node(node_id, device, info, bridge=None):
     try:
@@ -286,25 +367,118 @@ async def main():
             if client is None or not client.is_connected:
                 return {"success": False, "error": f"{node_id.upper()} BLE offline"}
 
+            if method in ("setFanProtection", "resetFanProtection"):
+                if node_id != "fan":
+                    return {
+                        "success": False,
+                        "error": "Only FAN supports protection"
+                    }
+
+                if method == "setFanProtection":
+                    if value is not True:
+                        return {
+                            "success": False,
+                            "error": "Invalid lock request"
+                        }
+                    # Lock is always allowed, even when MQTT attributes are stale.
+                    locked = True
+                else:
+                    # RESET: verify CoreIOT shared state and fresh FAN telemetry.
+                    if (
+                        bridge is None
+                        or not bridge.connected.is_set()
+                        or not bridge.fan_shared_synced.is_set()
+                    ):
+                        return {
+                            "success": False,
+                            "error": "CoreIOT state not synchronized"
+                        }
+
+                    shared = bridge.fan_shared
+                    if (
+                        shared.get("protection_requested") is not True
+                        or shared.get("protection_phase") != "WAIT_RESET"
+                        or shared.get("protection_alarm_active") is not False
+                    ):
+                        return {
+                            "success": False,
+                            "error": "FAN is not ready for Reset"
+                        }
+
+                    state = node_states.get("fan") or {}
+                    if (
+                        telemetry_status("fan") != "FRESH"
+                        or state.get("protection_locked") is not True
+                        or state.get("pwm") != 0
+                    ):
+                        return {
+                            "success": False,
+                            "error": "FAN lock state not confirmed"
+                        }
+
+                    locked = False
+
+                async with COMMAND_LOCKS["fan"]:
+                    # Recheck before releasing the lock if commands were queued.
+                    if not locked:
+                        if (
+                            bridge is None
+                            or not bridge.connected.is_set()
+                            or not bridge.fan_shared_synced.is_set()
+                            or bridge.fan_shared.get("protection_requested") is not True
+                            or bridge.fan_shared.get("protection_phase") != "WAIT_RESET"
+                            or bridge.fan_shared.get("protection_alarm_active") is not False
+                            or telemetry_status("fan") != "FRESH"
+                            or (node_states.get("fan") or {}).get("protection_locked") is not True
+                            or (node_states.get("fan") or {}).get("pwm") != 0
+                            or not client.is_connected
+                        ):
+                            return {
+                                "success": False,
+                                "error": "FAN Reset conditions changed"
+                            }
+                    confirmed = await send_fan_protection_command(
+                        client, info, locked
+                    )
+
+                return {
+                    "success": confirmed,
+                    "protection_locked": locked if confirmed else None
+                }
+
             if method == "setFanPWM":
                 if node_id != "fan":
                     return {"success": False, "error": "PWM only supported for FAN"}
-
                 if type(value) is not int or not 0 <= value <= 255:
                     return {"success": False, "error": "Invalid PWM value"}
 
-                async with COMMAND_LOCKS["fan"]:
-                    await send_pwm_command(client, info, value)
+                # Prevent PWM > 0 while the CoreIOT lock is active/unknown.
+                if value > 0:
+                    if bridge is None or not bridge.fan_shared_synced.is_set():
+                        return {
+                            "success": False,
+                            "error": "Protection state not synchronized"
+                        }
+                    if bridge.fan_shared.get("protection_requested") is not False:
+                        return {
+                            "success": False,
+                            "error": "FAN protection is active"
+                        }
 
+                async with COMMAND_LOCKS["fan"]:
+                    confirmed = await send_pwm_command(client, info, value)
+                if not confirmed:
+                    return {
+                        "success": False,
+                        "error": "PWM rejected or not confirmed"
+                    }
                 return {"success": True, "pwm": value}
 
             if method == "setRelay":
                 async with COMMAND_LOCKS[node_id]:
                     confirmed = await send_command(client, info, value)
-
                 if not confirmed:
                     return {"success": False, "error": "Relay state not confirmed"}
-
                 return {"success": True, "relay": int(value)}
 
             return {"success": False, "error": "Unsupported RPC method"}

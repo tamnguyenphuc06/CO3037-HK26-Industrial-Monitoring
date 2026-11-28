@@ -4,9 +4,14 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <ArduinoJson.h>
+
 #if defined(USE_FAN_CONFIG)
 void fan_set_pwm(uint8_t duty);
+bool fan_protection_lock();
+bool fan_protection_reset();
+bool fan_protection_is_locked();
 #endif
+
 #if defined(USE_FAN_CONFIG)
     #include "config_fan.h"
 #elif defined(USE_PUMP_CONFIG)
@@ -62,7 +67,20 @@ class CommandCallbacks: public BLECharacteristicCallbacks {
             Serial.println("[FAN] PWM out of range");
         }
     }
+}     
+else if (strcmp(cmd, "FAN_PROTECTION_LOCK") == 0) {
+    bool success = fan_protection_lock();
+
+    Serial.printf("[BLE] FAN LOCK: %s\n",
+                  success ? "SUCCESS" : "FAILED");
 }
+else if (strcmp(cmd, "FAN_PROTECTION_RESET") == 0) {
+    bool success = fan_protection_reset();
+
+    Serial.printf("[BLE] FAN RESET: %s\n",
+                  success ? "SUCCESS" : "FAILED");
+}
+
         #endif
             } else {
                 if (rxValue == "ON" || rxValue == "1") {
@@ -143,11 +161,25 @@ void ble_service_send_telemetry(
     doc["az"] = serialized(String(az, 2));
     doc["relay"] = relay_get_state() ? 1 : 0;
     doc["ai"] = ai_state;
+    
     if (pwm >= 0 && pwm <= 255) {
     doc["pwm"] = pwm;
 }
-    char payload[128];
-    serializeJson(doc, payload);
+
+#if defined(USE_FAN_CONFIG)
+doc["protection_locked"] = fan_protection_is_locked();
+#endif
+
+    
+char payload[224];
+
+if (measureJson(doc) >= sizeof(payload)) {
+    Serial.println("[BLE] Telemetry too large");
+    return;
+}
+
+serializeJson(doc, payload, sizeof(payload));
+
 
     pTelemetryChar->setValue((uint8_t*)payload, strlen(payload));
     pTelemetryChar->notify();

@@ -29,15 +29,67 @@ static unsigned long lastTelemetryTime = 0;
 // PWM 8-bit: 0-255.
 // 130: thu nghiem fan_low_speed.
 // 255: thu nghiem fan_normal.
-static uint8_t fanPwmDuty = 200;
+
+#if FAN_SAMPLE_MODE
+static uint8_t fanPwmDuty = 220;
+static bool fanProtectionLocked = false;
+#else
+static uint8_t fanPwmDuty = 0;
+static bool fanProtectionLocked = true;
+#endif
+
 void fan_set_pwm(uint8_t duty) {
+    // Khong cho FAN chay khi dang bi khoa
+    if (fanProtectionLocked && duty > 0) {
+        Serial.println("[FAN] PWM rejected: Protection LOCKED");
+        return;
+    }
+
     if (ledcWrite(PIN_FAN_D3, duty)) {
         fanPwmDuty = duty;
-        Serial.printf("[FAN] PWM updated: %u/255\n", (unsigned)fanPwmDuty);
+        Serial.printf("[FAN] PWM updated: %u/255\n",
+                      (unsigned)fanPwmDuty);
     } else {
         Serial.println("[FAN] Failed to update PWM");
     }
 }
+
+bool fan_protection_lock() {
+    fanProtectionLocked = true;
+
+    if (!ledcWrite(PIN_FAN_D3, 0)) {
+        Serial.println("[FAN] LOCK FAILED");
+        return false;
+    }
+
+    fanPwmDuty = 0;
+    Serial.println("[FAN] PROTECTION LOCKED");
+    return true;
+}
+
+bool fan_protection_reset() {
+    if (!fanProtectionLocked) {
+        Serial.println("[FAN] Already unlocked");
+        return false;
+    }
+
+    // Dam bao PWM = 0 truoc khi mo khoa
+    if (!ledcWrite(PIN_FAN_D3, 0)) {
+        Serial.println("[FAN] RESET FAILED");
+        return false;
+    }
+
+    fanPwmDuty = 0;
+    fanProtectionLocked = false;
+
+    Serial.println("[FAN] PROTECTION UNLOCKED");
+    return true;
+}
+
+bool fan_protection_is_locked() {
+    return fanProtectionLocked;
+}
+
 // Luu du lieu FAN moi nhat de gui BLE.
 static SensorData latestFanData{};
 static bool hasFanData = false;
