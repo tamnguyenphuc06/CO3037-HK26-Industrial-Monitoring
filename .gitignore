@@ -5,7 +5,8 @@
 *.elf
 *.map
 sdkconfig.old
-
+firmware/include/fan_reset_secret_local.h
+gateway_pc/fan_reset_key.local
 # Python
 __pycache__/
 *.py[cod]
