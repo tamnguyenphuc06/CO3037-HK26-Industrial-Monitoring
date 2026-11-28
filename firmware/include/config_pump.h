@@ -5,22 +5,22 @@
 #define DEVICE_NAME         "YOLO_PUMP_NODE"
 #define DEVICE_ID           "pump"
 
-// Chân GPIO trên Yolo UNO (Cổng Grove D3-D4 là GPIO 6 và GPIO 7)
-#define PIN_RELAY           6       // Kênh 1 của Module đóng ngắt 2 kênh OhStem (cắm Máy bơm USB)
-#define PIN_PUMP_CH2        7       // Kênh 2 để trống (khóa tắt an toàn khi khởi động)
+// Chân GPIO trên Yolo UNO (Cổng Grove D5-D6 là GPIO 8 và GPIO 9)
+#define PIN_RELAY           8       // Kênh 1 của Module đóng ngắt 2 kênh OhStem (cắm Máy bơm USB)
+#define PIN_PUMP_CH2        9       // Kênh 2 để trống (khóa tắt an toàn khi khởi động)
 #define PIN_DS18B20         1       // Giữ cùng chân GPIO 1 như Node Fan để tiện cắm chung DS18B20
 #define PIN_I2C_SDA         11
 #define PIN_I2C_SCL         12
 
 // Mức kích cho Module đóng ngắt 2 kênh OhStem
 // (Thường module OhStem kích mức HIGH; sẽ kiểm tra lại bằng đèn LED khi có mạch)
-#define RELAY_ACTIVE_LEVEL  HIGH
+#define RELAY_ACTIVE_LEVEL  LOW
 
 // Chu kỳ gửi dữ liệu BLE (miligiây)
 #define TELEMETRY_INTERVAL_MS 1000
 
 // 1 = Giả lập; 0 = Chạy phần cứng thật
-#define SIMULATE_DATA       1
+#define SIMULATE_DATA       0
 
 // UUID BLE riêng cho Node Máy Bơm (khớp 100% với gateway_pc/ble_client.py)
 #define SERVICE_UUID        "5bcfa202-2fc6-469f-9fdd-d6d0d442925c"
