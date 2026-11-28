@@ -127,6 +127,14 @@ void setup() {
         Serial.println("[FAN] Loi khoi tao PWM!");
     }
 
+#elif defined(USE_PUMP_CONFIG)
+
+    // Khoa kenh 2 cua Module dong ngat 2 kenh OhStem o trang thai TAT an toan
+    uint8_t ch2_inactive = (RELAY_ACTIVE_LEVEL == HIGH) ? LOW : HIGH;
+    digitalWrite(PIN_PUMP_CH2, ch2_inactive);
+    pinMode(PIN_PUMP_CH2, OUTPUT);
+    digitalWrite(PIN_PUMP_CH2, ch2_inactive);
+
 #endif
 
 #if defined(USE_FAN_CONFIG) && FAN_SAMPLE_MODE
