@@ -7,7 +7,7 @@
 
 // Chân trên Yolo UNO
 #define PIN_RELAY           4       // Relay rời, nếu có lắp
-#define PIN_DS18B20         5       // D2: dữ liệu DS18B20
+#define PIN_DS18B20         1       // D2: dữ liệu DS18B20
 #define PIN_I2C_SDA         11      // SDA: cổng I2C cho MPU6050
 #define PIN_I2C_SCL         12      // SCL: cổng I2C cho MPU6050
 #define PIN_FAN_D3          6       // D3: chân quạt đã thử chạy

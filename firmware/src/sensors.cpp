@@ -26,6 +26,13 @@ static DallasTemperature ds18b20(&oneWire);
 static bool mpu_ready = false;
 static bool ds_ready = false;
 
+static constexpr unsigned long DS18B20_INTERVAL_MS = 800;
+static constexpr unsigned long DS18B20_RETRY_MS    = 2000;
+static unsigned long last_ds_request_ms = 0;
+static unsigned long last_ds_retry_ms   = 0;
+static float last_ds_temp = 0.0f;
+static bool ds_has_valid_temp = false;
+
 // Kiem tra module con tra loi tren I2C.
 static bool mpuResponds() {
     Wire.beginTransmission(MPU_ADDRESS);
@@ -69,6 +76,10 @@ void sensors_init(uint8_t pin_ds18b20,
 
     mpu_ready = false;
     ds_ready = false;
+    ds_has_valid_temp = false;
+    last_ds_temp = 0.0f;
+    last_ds_request_ms = 0;
+    last_ds_retry_ms = 0;
 
     if (_is_simulation) {
         Serial.println("[SENSORS] Che do MO PHONG");
@@ -109,14 +120,17 @@ void sensors_init(uint8_t pin_ds18b20,
     // Khoi tao DS18B20 tren duong OneWire rieng.
     oneWire.begin(_pin_ds18b20);
     ds18b20.begin();
+    ds18b20.setResolution(12);
     ds18b20.setWaitForConversion(false);
 
     if (ds18b20.getDeviceCount() > 0) {
         ds_ready = true;
         ds18b20.requestTemperatures();
-        Serial.println("[DS18B20] Khoi tao thanh cong");
+        last_ds_request_ms = millis();
+        Serial.printf("[DS18B20] Khoi tao thanh cong tren GPIO %u\n", _pin_ds18b20);
     } else {
-        Serial.println("[DS18B20] Khong tim thay cam bien!");
+        last_ds_retry_ms = millis();
+        Serial.printf("[DS18B20] Khong tim thay cam bien tren GPIO %u!\n", _pin_ds18b20);
     }
 }
 
@@ -164,16 +178,40 @@ SensorData sensors_read_data() {
             sqrtf(data.ax * data.ax + data.ay * data.ay);
     }
 
-    if (ds_ready) {
-        const float temperature = ds18b20.getTempCByIndex(0);
-
-        if (temperature != DEVICE_DISCONNECTED_C
-            && isfinite(temperature)) {
-            data.temp = temperature;
-            temperature_ok = true;
+    const unsigned long now = millis();
+    if (!ds_ready) {
+        // Tu dong do lai moi 2 giay neu luc khoi dong cam long hoac bi rut day
+        if (now - last_ds_retry_ms >= DS18B20_RETRY_MS) {
+            last_ds_retry_ms = now;
+            ds18b20.begin();
+            if (ds18b20.getDeviceCount() > 0) {
+                ds18b20.setResolution(12);
+                ds18b20.setWaitForConversion(false);
+                ds18b20.requestTemperatures();
+                last_ds_request_ms = now;
+                ds_ready = true;
+                Serial.println("[DS18B20] Da ket noi lai cam bien!");
+            }
         }
-
-        ds18b20.requestTemperatures();
+    } else if (now - last_ds_request_ms >= DS18B20_INTERVAL_MS) {
+        const float temperature = ds18b20.getTempCByIndex(0);
+        if (temperature != DEVICE_DISCONNECTED_C && isfinite(temperature)) {
+            last_ds_temp = temperature;
+            ds_has_valid_temp = true;
+        } else {
+            ds_has_valid_temp = false;
+            ds_ready = false;
+            last_ds_retry_ms = now;
+            Serial.println("[DS18B20] Loi: Mat ket noi cam bien (-127 C)!");
+        }
+        if (ds_ready) {
+            ds18b20.requestTemperatures();
+            last_ds_request_ms = now;
+        }
+    }
+    if (ds_has_valid_temp) {
+        data.temp = last_ds_temp;
+        temperature_ok = true;
     }
 
     uint8_t error_flags = SENSOR_OK;

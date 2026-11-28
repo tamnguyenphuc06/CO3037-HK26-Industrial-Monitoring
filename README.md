@@ -137,6 +137,29 @@ pio run -e fan_node --target upload
 pio run -e pump_node --target upload
 ```
 
+For the fan node's BLE telemetry mode, select `node_fan_ble` under
+**PlatformIO: Project Tasks** and run **Upload**, then **Monitor**. From a
+terminal at the repository root, the equivalent commands are:
+
+```powershell
+pio run -e node_fan_ble -t upload
+pio device monitor
+```
+
+Keep the serial monitor open for firmware logs. To receive telemetry on the PC,
+open a second terminal and run the BLE client (the PC must have Bluetooth LE):
+
+```powershell
+cd gateway_pc
+python -m pip install -r requirements.txt
+python ble_client.py
+```
+
+The existing `node_fan` environment remains in CSV sampling mode for
+`collect_samples.py`; use `node_fan_ble` for sensor telemetry over Bluetooth.
+BLE telemetry is sent every second and includes temperature, acceleration,
+relay state, and TinyML state.
+
 ### 2. Tier 2 – PC Local IoT Gateway
 
 ```bash
